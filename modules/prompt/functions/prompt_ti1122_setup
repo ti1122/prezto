@@ -1,0 +1,160 @@
+#
+# ti1122's prompt.
+#
+
+pmodload 'helper'
+
+function prompt_ti1122_todo () {
+  local dotcolor='%B%F{black}'
+  local no_dotcolor='%f%b'
+
+  if (( $+functions[t_] )); then
+    echo "%F{white}(todo:[$(t_ | wc -l | sed -e's/ *//')])${dotcolor}·${nodotcolor}"
+  else
+    echo ''
+  fi
+}
+
+function _prompt_ti1122_getwidth () {
+  local width
+
+  width=${1//\%F{[[:alpha:]]##}/} # search-and-replace color escapes
+  width=${width//\%f/} # search-and-replace color escapes
+  width=${width//\%[Bb]/} # search-and-replace color escapes
+  width=${#${(%)width}} # expand all escapes and count the chars
+
+  echo $width
+}
+
+function prompt_ti1122_format () {
+  setopt LOCAL_OPTIONS
+  setopt EXTENDED_GLOB
+
+  local -a lines noteline infoline promptline
+  
+  local dotcolor='%B%F{black}'
+  local no_dotcolor='%f%b'
+
+  ### First, assemble the top line
+
+  # shell level, if exists
+  infoline+=( '%(2L.%F{yellow}<%L>%f .) ' )
+  # alignment calculation
+  # for alignment, later
+  local p_width=$(_prompt_ti1122_getwidth "${(S)infoline}")
+
+  # Current dir; show in yellow if not writable
+  [[ -w $PWD ]] && infoline+=( '%F{white}' ) || infoline+=( '%F{yellow}' )
+  infoline+=( "%~ " )
+
+  # git info
+  if [ $git_info ]; then
+    infoline+=( "%b${git_info:+${(e)git_info[prompt]}}${dotcolor}·${nodotcolor}" )
+  else
+    infoline+=( "" )
+  fi
+
+  # todos
+  infoline+=( "$(prompt_ti1122_todo)" )
+
+  # date, should be on the RHS
+  infoline+=( "%b%F{blue}Time:[%*]%f" )
+
+  # Strip color to find text width & make the full-width filler
+  local i_width=$(_prompt_ti1122_getwidth "${(S)infoline}")
+  local filler="${dotcolor}${(l:$(( $COLUMNS - $i_width + 3 ))::·:)}${nodotcolor} "
+
+  # place the filler in between path and username
+  infoline[3]=( "${infoline[3]}${filler}" )
+
+  # assemble the main line
+  # error code, always first
+  promptline+=( " %(?..%F{red}%?%f | )" )
+  # user@server. red if under ssh
+  promptline+=( "%B%F{green}%n%F{white}@" ) 
+  [[ -n $SSH_CLIENT ]] && promptline+=( "%F{red}%m" ) || promptline+=( "%F{cyan}%m" )
+  promptline+=( "%f%b " )
+  # jobs
+  promptline+=( "%(1j.%F{green}%j:%f.)" )
+  # lastly, promptchar
+  promptline+=( "%(#.%F{red}.%F{white})%#%f " )
+
+  # assemble the note line
+  # The note line is one or more lines, displayed before the main line. It
+  # behaves as a reminder. It is only displayed if $NOTE_FILENAME exists in
+  # the current directory.
+  # The nodeline setup comes after the main line, because I want to align
+  # note: text with the promptchar.
+  local -r NOTE_FILENAME=.note
+
+  noteline=""
+  if [ -e $NOTE_FILENAME ]; then
+    local note_readline
+    local prep="${(l.$(( $p_width - 1 )).. .)}"
+    note_readline=`cat $NOTE_FILENAME|head -n 4|sed "2,$ s/^/${prep}/"`
+
+    noteline=( ${prep:7} )
+
+    noteline+=( '%B%F{black}note ' )
+    noteline+=( '%# ' )
+    noteline+=( "${note_readline}%f%b" )
+  fi
+
+  ### Now, assemble all prompt lines
+  lines+=( '  ' )
+  lines+=( ${(j::)infoline} )
+  lines+=( ${(j::)noteline} )
+  lines+=( ${(j::)promptline} )
+
+  PROMPT=${(F)lines}
+}
+
+function prompt_ti1122_precmd {
+  setopt LOCAL_OPTIONS
+  unsetopt XTRACE KSH_ARRAYS
+
+  # Get Git repository information.
+  if (( $+functions[git-info] )); then
+    git-info
+  fi
+
+  # Make the prompt
+  prompt_ti1122_format
+
+}
+
+function prompt_ti1122_setup () {
+  setopt LOCAL_OPTIONS
+  unsetopt XTRACE KSH_ARRAYS
+  prompt_opts=(cr percent subst)
+
+  # Load required functions.
+  autoload -Uz add-zsh-hook
+
+  # Add hook for calling vcs_info before each command.
+  add-zsh-hook precmd prompt_ti1122_precmd
+
+  # Set git-info parameters.
+  zstyle ':prezto:module:git:info' verbose 'yes'
+  zstyle ':prezto:module:git:info:action' format ':%F{yellow}%s%f'
+  zstyle ':prezto:module:git:info:added' format '%F{green}+%f'
+  zstyle ':prezto:module:git:info:ahead' format '%F{yellow}^%f'
+  zstyle ':prezto:module:git:info:behind' format '%F{yellow}$%f'
+  zstyle ':prezto:module:git:info:branch' format '%F{green}%b%f'
+  zstyle ':prezto:module:git:info:commit' format '%F{green}%.7c%f'
+  zstyle ':prezto:module:git:info:deleted' format '%F{red}x%f'
+  zstyle ':prezto:module:git:info:modified' format '%F{blue}*%f'
+  zstyle ':prezto:module:git:info:position' format '%F{red}%p%f'
+  zstyle ':prezto:module:git:info:renamed' format '%F{magenta}[rn]%f'
+  zstyle ':prezto:module:git:info:stashed' format '%F{cyan}_$%f'
+  zstyle ':prezto:module:git:info:unmerged' format '%F{blue}[um]%f'
+  zstyle ':prezto:module:git:info:untracked' format '%F{white}?%f'
+  zstyle ':prezto:module:git:info:keys' format \
+    'prompt' '%F{green}git:[$(coalesce "%b" "%p" "%c")%s %A%B%S%a%d%m%r%U%u%F{green}]%f' \
+    'rprompt' '' 
+
+  # Define prompts.
+  SPROMPT='zsh: correct %F{red}%R%f to %F{green}%r%f [nyae]? '
+}
+
+prompt_ti1122_setup "$@"
